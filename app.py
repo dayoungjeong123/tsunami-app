@@ -16,7 +16,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 # 기본 설정
 # --------------------------------------------------
 st.set_page_config(page_title="AI 쓰나미 예측 & 대응", layout="wide")
-st.title("🌊 AI로 쓰나미 예측하고, 행동으로 이어가기")
+st.title("🌊 AI 지진탐정단: 쓰나미를 예측하라! 그리고 안전하게 대응하자! ")
 
 # --------------------------------------------------
 # (A) 스타일 (반드시 문자열로 감싸기)

@@ -10,12 +10,17 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix
+from sklearn.metrics import accuracy_score, roc_auc_score
 
+# --------------------------------------------------
+# 기본 설정
+# --------------------------------------------------
 st.set_page_config(page_title="AI 쓰나미 예측 & 대응", layout="wide")
 st.title("🌊 AI로 쓰나미 예측하고, 행동으로 이어가기")
 
-# ---------- (A) 미니 스타일: 카드/배지/타임라인 ----------
+# --------------------------------------------------
+# (A) 스타일 (반드시 문자열로 감싸기)
+# --------------------------------------------------
 st.markdown("""
 <style>
   .banner{padding:14px 16px;border-radius:14px;background:linear-gradient(135deg,#1f6feb,#7c3aed);
@@ -33,7 +38,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- (B) 유틸: 예쁜 대응 카드 ----------
+# --------------------------------------------------
+# (B) 대응 카드 UI
+# --------------------------------------------------
 def render_safety_ui(prob: float, threshold: float = 0.5):
     st.markdown(f"""
     <div class="banner">
@@ -48,7 +55,7 @@ def render_safety_ui(prob: float, threshold: float = 0.5):
     if prob >= threshold:
         st.markdown('<span class="badge badge-red">위험도: 높음</span>', unsafe_allow_html=True)
         tone, lead = "danger", "🚨 발생 가능성 ‘높음’ — 즉시 대피 절차를 확인하세요."
-    elif prob >= threshold*0.6:
+    elif prob >= threshold * 0.6:
         st.markdown('<span class="badge badge-amber">위험도: 중간</span>', unsafe_allow_html=True)
         tone, lead = "warn", "⚠️ 주의 — 경보·방송 확인 및 대피 경로 점검이 필요합니다."
     else:
@@ -110,7 +117,9 @@ def render_safety_ui(prob: float, threshold: float = 0.5):
 """
     st.download_button("⬇️ 대응 요약 텍스트", guide_text, file_name="tsunami_safety_guide.txt")
 
-# ---------- (C) 데이터 입력(업로드 또는 리포 포함) ----------
+# --------------------------------------------------
+# (C) 데이터 입력
+# --------------------------------------------------
 st.sidebar.header("데이터 입력")
 uploaded = st.sidebar.file_uploader("CSV 업로드(또는 리포에 포함된 파일명 입력)", type="csv")
 default_path = st.sidebar.text_input("리포/로컬 CSV 경로(선택)", value="earthquake_data_tsunami.csv")
@@ -121,7 +130,7 @@ def load_df_from_source(uploaded_file, path_string):
         return pd.read_csv(uploaded_file)
     if path_string and os.path.exists(path_string):
         return pd.read_csv(path_string)
-    # 데모용 synthetic (없을 때만)
+    # 데모(없을 때만 생성)
     rng = np.random.default_rng(42)
     n = 400
     df_demo = pd.DataFrame({
@@ -131,7 +140,7 @@ def load_df_from_source(uploaded_file, path_string):
         "lon": rng.uniform(-180, 180, n),
         "distance_to_coast": rng.exponential(200, n).clip(0, 800)
     })
-    # 단순 규칙으로 라벨 생성(데모): 강하고 얕고 해안가 가까울수록 1
+    # 단순 규칙으로 라벨 생성(데모)
     logit = (df_demo["magnitude"]-5.5)*1.6 + (80-df_demo["depth"])*0.015 + (200-df_demo["distance_to_coast"])*0.005
     p = 1/(1+np.exp(-logit))
     df_demo["tsunami"] = (p > 0.55).astype(int)
@@ -141,10 +150,13 @@ df = load_df_from_source(uploaded, default_path)
 st.caption("데이터 미리보기")
 st.dataframe(df.head(), use_container_width=True)
 
-# ---------- (D) 타깃/피처 선택 ----------
+# --------------------------------------------------
+# (D) 타깃/피처 선택
+# --------------------------------------------------
 cols = list(df.columns)
 auto_target = next((c for c in cols if any(k in c.lower() for k in ["tsunami","label","target","occur"])), cols[-1])
 target_col = st.selectbox("타깃(쓰나미 발생 여부) 컬럼 선택", options=cols, index=cols.index(auto_target))
+
 X = df.drop(columns=[target_col])
 y = df[target_col]
 
@@ -154,28 +166,35 @@ if len(num_cols) == 0:
     st.error("숫자형 피처가 필요합니다. (예: magnitude, depth, lat, lon ...)")
     st.stop()
 
-# ---------- (E) 모델 학습/저장/로드 ----------
+# --------------------------------------------------
+# (E) 모델 학습/저장/로드
+# --------------------------------------------------
 MODEL_PATH = "rf_model.pkl"
 META_PATH = "rf_meta.joblib"
 
 @st.cache_resource
 def train_or_load(X, y, num_cols, cat_cols):
+    # 저장된 모델 있으면 로드
     if os.path.exists(MODEL_PATH) and os.path.exists(META_PATH):
         return joblib.load(MODEL_PATH), joblib.load(META_PATH)
 
+    # 없으면 학습
     num_pipe = Pipeline([("imp", SimpleImputer(strategy="median"))])
     cat_pipe = Pipeline([("imp", SimpleImputer(strategy="most_frequent")),
                          ("oh", OneHotEncoder(handle_unknown="ignore"))])
     pre = ColumnTransformer([("num", num_pipe, num_cols), ("cat", cat_pipe, cat_cols)])
-    rf = RandomForestClassifier(n_estimators=300, random_state=42,
-                                class_weight="balanced_subsample", n_jobs=-1)
+
+    rf = RandomForestClassifier(
+        n_estimators=300, random_state=42,
+        class_weight="balanced_subsample", n_jobs=-1
+    )
     pipe = Pipeline([("pre", pre), ("rf", rf)])
 
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     pipe.fit(Xtr, ytr)
 
     yhat = pipe.predict(Xte)
-    ypr = pipe.predict_proba(Xte)[:,1]
+    ypr  = pipe.predict_proba(Xte)[:,1]
     acc = accuracy_score(yte, yhat)
     try:
         auc = roc_auc_score(yte, ypr)
@@ -189,8 +208,12 @@ def train_or_load(X, y, num_cols, cat_cols):
         span = max(1e-9, cmax - cmin)
         feature_ranges[c] = (float(cmin - 0.05*span), float(cmax + 0.05*span))
 
-    meta = {"acc": acc, "auc": auc, "num_cols": num_cols, "cat_cols": cat_cols,
-            "feature_ranges": feature_ranges, "top_numeric": num_cols[:8]}
+    meta = {
+        "acc": acc, "auc": auc,
+        "num_cols": num_cols, "cat_cols": cat_cols,
+        "feature_ranges": feature_ranges,
+        "top_numeric": num_cols[:8]  # 슬라이더 최대 8개
+    }
 
     joblib.dump(pipe, MODEL_PATH)
     joblib.dump(meta, META_PATH)
@@ -204,17 +227,21 @@ with c2: st.metric("AUC", f"{meta['auc']:.3f}" if np.isfinite(meta["auc"]) else 
 with c3: st.write("학습 피처 수:", len(num_cols)+len(cat_cols))
 st.divider()
 
-# ---------- (F) 탭: 예측 / 대응 / 데이터 ----------
+# --------------------------------------------------
+# (F) 탭: 예측 / 대응책 / 데이터·한계
+# --------------------------------------------------
 tab1, tab2, tab3 = st.tabs(["예측", "대응책", "데이터·한계"])
 
 with tab1:
     st.subheader("🔧 슬라이더로 입력값 조절 → 쓰나미 발생 가능성 계산")
+
     top_feats = meta.get("top_numeric", [])
     ranges = meta.get("feature_ranges", {})
 
     if len(top_feats) == 0:
         st.warning("숫자형 피처가 없어 슬라이더를 만들 수 없어요.")
     else:
+        # 🔴 반드시 form 내부에 제출 버튼 포함!
         with st.form("slider_form"):
             cols2 = st.columns(2)
             user_vals = {}
@@ -222,7 +249,12 @@ with tab1:
                 low, high = ranges.get(f, (float(np.nanmin(X[f])), float(np.nanmax(X[f]))))
                 default = float(np.nanmedian(X[f]))
                 with cols2[i % 2]:
-                    user_vals[f] = st.slider(f, min_value=float(low), max_value=float(high), value=float(np.clip(default, low, high)))
+                    user_vals[f] = st.slider(
+                        f,
+                        min_value=float(low),
+                        max_value=float(high),
+                        value=float(np.clip(default, low, high))
+                    )
 
             # 범주형은 최빈값으로 자동 설정(간단화)
             cat_defaults = {}
@@ -233,6 +265,8 @@ with tab1:
                     cat_defaults[c] = None
 
             threshold = st.slider("판정 기준(Threshold)", 0.0, 1.0, 0.5, 0.01)
+
+            # ✅ 폼 내부에 제출 버튼 필수
             submitted = st.form_submit_button("예측하기")
 
         if submitted:
@@ -250,7 +284,7 @@ with tab1:
 
 with tab2:
     st.subheader("예측 결과 기반 대응 가이드")
-    proba = st.session_state.get("last_proba", 0.23)   # 없으면 예시값
+    proba = st.session_state.get("last_proba", 0.23)   # 제출 전엔 예시값
     threshold = st.session_state.get("last_threshold", 0.5)
     render_safety_ui(prob=proba, threshold=threshold)
 
